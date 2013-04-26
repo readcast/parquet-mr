@@ -28,6 +28,7 @@ import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
@@ -35,6 +36,9 @@ import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.InvalidInputException;
+import org.apache.hadoop.util.StringUtils;
+import org.apache.hadoop.util.ReflectionUtils;
 
 import parquet.Log;
 import parquet.hadoop.api.ReadSupport;
@@ -115,7 +119,7 @@ public class ParquetInputFormat<T> extends FileInputFormat<Void, T> {
     return new ParquetRecordReader<T>(getReadSupport(taskAttemptContext.getConfiguration()));
   }
 
-  private ReadSupport<T> getReadSupport(Configuration configuration){
+  public ReadSupport<T> getReadSupport(Configuration configuration){
     try {
       if (readSupportClass == null) {
         readSupportClass = getReadSupportClass(configuration);
@@ -211,10 +215,13 @@ public class ParquetInputFormat<T> extends FileInputFormat<Void, T> {
    */
   @Override
   public List<InputSplit> getSplits(JobContext jobContext) throws IOException {
+    return getSplits(jobContext.getConfiguration());
+  }
+
+  public List<InputSplit> getSplits(Configuration configuration) throws IOException {
     List<InputSplit> splits = new ArrayList<InputSplit>();
-    Configuration configuration = jobContext.getConfiguration();
-    List<Footer> footers = getFooters(jobContext);
-    FileMetaData globalMetaData = getGlobalMetaData(jobContext);
+    List<Footer> footers = getFooters(configuration);
+    FileMetaData globalMetaData = getGlobalMetaData(configuration);
     ReadContext readContext = getReadSupport(configuration).init(
         configuration,
         globalMetaData.getKeyValueMetaData(),
@@ -246,9 +253,12 @@ public class ParquetInputFormat<T> extends FileInputFormat<Void, T> {
    * @throws IOException
    */
   public List<Footer> getFooters(JobContext jobContext) throws IOException {
+    return getFooters(jobContext.getConfiguration());
+  }
+
+  public List<Footer> getFooters(Configuration configuration) throws IOException {
     if (footers == null) {
-      Configuration configuration = jobContext.getConfiguration();
-      List<FileStatus> statuses = super.listStatus(jobContext);
+      List<FileStatus> statuses = listStatus(configuration);
       LOG.debug("reading " + statuses.size() + " files");
       footers = ParquetFileReader.readAllFootersInParallelUsingSummaryFiles(configuration, statuses);
     }
@@ -261,12 +271,104 @@ public class ParquetInputFormat<T> extends FileInputFormat<Void, T> {
    * @throws IOException
    */
   public FileMetaData getGlobalMetaData(JobContext jobContext) throws IOException {
+    return getGlobalMetaData(jobContext.getConfiguration());
+  }
+
+  public FileMetaData getGlobalMetaData(Configuration configuration) throws IOException {
     FileMetaData fileMetaData = null;
-    for (Footer footer : getFooters(jobContext)) {
+    for (Footer footer : getFooters(configuration)) {
       ParquetMetadata currentMetadata = footer.getParquetMetadata();
       fileMetaData = mergeInto(currentMetadata.getFileMetaData(), fileMetaData);
     }
     return fileMetaData;
   }
 
+  private static final PathFilter myHiddenFileFilter = new PathFilter(){
+      public boolean accept(Path p){
+        String name = p.getName();
+        return !name.startsWith("_") && !name.startsWith(".");
+      }
+    };
+
+  /**
+   * Proxy PathFilter that accepts a path only if all filters given in the
+   * constructor do. Used by the listPaths() to apply the built-in
+   * hiddenFileFilter together with a user provided one (if any).
+   */
+  private static class MyMultiPathFilter implements PathFilter {
+    private List<PathFilter> filters;
+
+    public MyMultiPathFilter(List<PathFilter> filters) {
+      this.filters = filters;
+    }
+
+    public boolean accept(Path path) {
+      for (PathFilter filter : filters) {
+        if (!filter.accept(path)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
+  protected List<FileStatus> listStatus(Configuration conf
+                                          ) throws IOException {
+      List<FileStatus> result = new ArrayList<FileStatus>();
+
+      String [] list = StringUtils.split(conf.get("mapred.input.dir", ""));
+      Path[] dirs = new Path[list.length];
+      for (int i = 0; i < list.length; i++) {
+         dirs[i] = new Path(StringUtils.unEscapeString(list[i]));
+      }
+
+      if (dirs.length == 0) {
+        throw new IOException("No input paths specified in job");
+      }
+
+      List<IOException> errors = new ArrayList<IOException>();
+
+      // creates a MultiPathFilter with the hiddenFileFilter and the
+      // user provided one (if any).
+      List<PathFilter> filters = new ArrayList<PathFilter>();
+      filters.add(myHiddenFileFilter);
+
+      Class<?> filterClass = conf.getClass("mapred.input.pathFilter.class", null,
+           PathFilter.class);
+      PathFilter jobFilter = (filterClass != null) ?
+           (PathFilter) ReflectionUtils.newInstance(filterClass, conf) : null;
+
+      if (jobFilter != null) {
+        filters.add(jobFilter);
+      }
+      PathFilter inputFilter = new MyMultiPathFilter(filters);
+
+      for (int i=0; i < dirs.length; ++i) {
+        Path p = dirs[i];
+        FileSystem fs = p.getFileSystem(conf);
+        FileStatus[] matches = fs.globStatus(p, inputFilter);
+        if (matches == null) {
+          errors.add(new IOException("Input path does not exist: " + p));
+        } else if (matches.length == 0) {
+          errors.add(new IOException("Input Pattern " + p + " matches 0 files"));
+        } else {
+          for (FileStatus globStat: matches) {
+            if (globStat.isDir()) {
+              for(FileStatus stat: fs.listStatus(globStat.getPath(),
+                  inputFilter)) {
+                result.add(stat);
+              }
+            } else {
+              result.add(globStat);
+            }
+          }
+        }
+      }
+
+      if (!errors.isEmpty()) {
+        throw new InvalidInputException(errors);
+      }
+      LOG.info("Total input paths to process : " + result.size());
+      return result;
+    }
 }

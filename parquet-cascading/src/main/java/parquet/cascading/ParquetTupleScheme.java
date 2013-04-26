@@ -8,8 +8,6 @@
 
  import parquet.example.data.simple.SimpleGroup;
  import parquet.hadoop.example.ExampleInputFormat;
- import parquet.hadoop.cascading.DeprecatedContainerInputFormat;
- import parquet.hadoop.cascading.Container;
 
  import cascading.flow.FlowProcess;
  import cascading.scheme.SinkCall;
@@ -32,8 +30,8 @@ public class ParquetTupleScheme extends Scheme<JobConf, RecordReader, OutputColl
   @Override
   public void sourceConfInit(FlowProcess<JobConf> fp,
       Tap<JobConf, RecordReader, OutputCollector> tap, JobConf jobConf) {
-    DeprecatedContainerInputFormat.setInputFormat(ExampleInputFormat.class, jobConf);
-  }
+    jobConf.setInputFormat(DeprecatedExampleInputFormat.class);
+ }
 
   @SuppressWarnings("unchecked")
   @Override

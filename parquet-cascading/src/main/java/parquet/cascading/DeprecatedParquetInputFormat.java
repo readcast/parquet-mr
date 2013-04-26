@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package parquet.hadoop.cascading;
+package parquet.cascading;
 
 import java.io.DataInput;
 import java.io.DataOutput;
@@ -30,6 +30,7 @@ import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapreduce.InputFormat;
 import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.StatusReporter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
@@ -37,74 +38,24 @@ import org.apache.hadoop.mapreduce.TaskInputOutputContext;
 import org.apache.hadoop.util.ReflectionUtils;
 
 import com.twitter.elephantbird.util.HadoopUtils;
+import parquet.hadoop.ParquetInputFormat;
+import parquet.hadoop.ParquetRecordReader;
 
-/**
- * The wrapper enables an {@link InputFormat} written for new
- * <code>mapreduce</code> interface to be used unmodified in contexts where
- * a {@link org.apache.hadoop.mapred.InputFormat} with old <code>mapred</code>
- * interface is required. </p>
- *
- * Instead of returning <K, V> it returns {@link Container}s of <K> and <V>.
- *
- * Usage: <pre>
- *    // set InputFormat class using a mapreduce InputFormat
- *    DeprecatedContainerInputFormat.setInputFormat(org.apache.hadoop.mapreduce.lib.input.TextInputFormat.class, jobConf);
- *    jobConf.setOutputFormat(org.apache.hadoop.mapred.TextOutputFormat.class);
- *    // ...
- * </pre>
- *
- * TODO: move to Elephant Bird, reduce duplication.
- *
- */
 @SuppressWarnings("deprecation")
-public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.mapred.InputFormat<Container<K>, Container<V>> {
+public abstract class DeprecatedParquetInputFormat<V> implements org.apache.hadoop.mapred.InputFormat<Container<Void>, Container<V>> {
 
-  private static final String CLASS_CONF_KEY = "elephantbird.class.for.DeprecatedInputFormatWrapper";
-
-  protected InputFormat<K, V> realInputFormat;
-
-  /**
-   * Sets jobs input format to {@link DeprecatedInputFormatWrapper} and stores
-   * supplied real {@link InputFormat} class name in job configuration.
-   * This configuration is read on the remote tasks to instantiate actual
-   * InputFormat correctly.
-   */
-  public static void setInputFormat(Class<?> realInputFormatClass, JobConf jobConf) {
-    jobConf.setInputFormat(DeprecatedContainerInputFormat.class);
-    HadoopUtils.setClassConf(jobConf, CLASS_CONF_KEY, realInputFormatClass);
-  }
-
-  @SuppressWarnings("unchecked")
-  private void initInputFormat(JobConf conf) {
-    if (realInputFormat == null) {
-      realInputFormat = ReflectionUtils.newInstance(
-                          conf.getClass(CLASS_CONF_KEY, null, InputFormat.class),
-                          conf);
-    }
-  }
-
-  public DeprecatedContainerInputFormat() {
-    // real inputFormat is initialized based on conf.
-  }
-
-  public DeprecatedContainerInputFormat(InputFormat<K, V> realInputFormat) {
-    this.realInputFormat = realInputFormat;
-  }
+  protected ParquetInputFormat<V> realInputFormat;
 
   @Override
-  public RecordReader<Container<K>, Container<V>> getRecordReader(InputSplit split, JobConf job,
+  public RecordReader<Container<Void>, Container<V>> getRecordReader(InputSplit split, JobConf job,
                   Reporter reporter) throws IOException {
-    initInputFormat(job);
-    return new RecordReaderWrapper<K, V>(realInputFormat, split, job, reporter);
+    return new RecordReaderWrapper<V>(realInputFormat, split, job, reporter);
   }
 
   @Override
   public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
-    initInputFormat(job);
-
-    try {
       List<org.apache.hadoop.mapreduce.InputSplit> splits =
-        realInputFormat.getSplits(new JobContext(job, null));
+        realInputFormat.getSplits(job);
 
       if (splits == null) {
         return null;
@@ -127,11 +78,6 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
       }
 
       return resultSplits;
-
-    } catch (InterruptedException e) {
-      Thread.interrupted();
-      throw new IOException(e);
-    }
   }
 
   /**
@@ -180,20 +126,20 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
     }
   }
 
-  private static class RecordReaderWrapper<K, V> implements RecordReader<Container<K>, Container<V>> {
+  private static class RecordReaderWrapper<V> implements RecordReader<Container<Void>, Container<V>> {
 
-    private org.apache.hadoop.mapreduce.RecordReader<K, V> realReader;
+    private ParquetRecordReader<V> realReader;
     private long splitLen; // for getPos()
 
     // expect readReader return same Key & Value objects (common case)
     // this avoids extra serialization & deserialazion of these objects
-    private Container<K> keyContainer = null;
+    private Container<Void> keyContainer = null;
     private Container<V> valueContainer = null;
 
     private boolean firstRecord = false;
     private boolean eof = false;
 
-    public RecordReaderWrapper(InputFormat<K, V> newInputFormat,
+    public RecordReaderWrapper(ParquetInputFormat<V> newInputFormat,
                                InputSplit oldSplit,
                                JobConf oldJobConf,
                                Reporter reporter) throws IOException {
@@ -216,34 +162,14 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
         taskAttemptID = new TaskAttemptID();
       }
 
-      // create a TaskInputOutputContext
-      @SuppressWarnings("unchecked")
-      TaskAttemptContext taskContext =
-        new TaskInputOutputContext(oldJobConf, taskAttemptID,
-            null, null, new ReporterWrapper(reporter)) {
-
-              @Override
-              public Object getCurrentKey() throws IOException, InterruptedException {
-                throw new RuntimeException("not implemented");
-              }
-              @Override
-              public Object getCurrentValue() throws IOException, InterruptedException {
-                throw new RuntimeException("not implemented");
-              }
-              @Override
-              public boolean nextKeyValue() throws IOException, InterruptedException {
-                throw new RuntimeException("not implemented");
-              }
-      };
-
       try {
-        realReader = newInputFormat.createRecordReader(split, taskContext);
-        realReader.initialize(split, taskContext);
+        realReader = new ParquetRecordReader<V>(newInputFormat.getReadSupport(oldJobConf));
+        realReader.initialize(split, oldJobConf);
 
         // read once to gain access to key and value objects
         if (realReader.nextKeyValue()) {
           firstRecord = true;
-          keyContainer = new Container<K>();
+          keyContainer = new Container<Void>();
           keyContainer.set(realReader.getCurrentKey());
           valueContainer = new Container<V>();
           valueContainer.set(realReader.getCurrentValue());
@@ -263,7 +189,7 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
     }
 
     @Override
-    public Container<K> createKey() {
+    public Container<Void> createKey() {
       return keyContainer;
     }
 
@@ -288,7 +214,7 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
     }
 
     @Override
-    public boolean next(Container<K> key, Container<V> value) throws IOException {
+    public boolean next(Container<Void> key, Container<V> value) throws IOException {
       if (eof) {
         return false;
       }

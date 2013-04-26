@@ -30,6 +30,7 @@ import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapreduce.InputFormat;
 import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.StatusReporter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
@@ -104,7 +105,7 @@ public class DeprecatedContainerInputFormat<K, V> implements org.apache.hadoop.m
 
     try {
       List<org.apache.hadoop.mapreduce.InputSplit> splits =
-        realInputFormat.getSplits(new JobContext(job, null));
+        realInputFormat.getSplits(new Job(job, null));
 
       if (splits == null) {
         return null;
