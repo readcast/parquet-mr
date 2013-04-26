@@ -52,9 +52,8 @@ public class ParquetReader<T> implements Closeable {
     Map<String, String> extraMetadata = fileMetaData.getKeyValueMetaData();
     ParquetInputSplit inputSplit = new ParquetInputSplit(file, 0, 0, null, blocks,
         schema, schema, extraMetadata);
-    TaskAttemptContext taskAttemptContext = new TaskAttemptContext(conf, new TaskAttemptID("test", 1, true, 1, 1));
     try {
-      reader.initialize(inputSplit, taskAttemptContext);
+      reader.initialize(inputSplit, conf);
     } catch (InterruptedException e) {
       throw new IOException(e);
     }
