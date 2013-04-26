@@ -32,6 +32,7 @@ import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.JobID;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
+import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
 import org.apache.thrift.TException;
@@ -91,7 +92,7 @@ public class TestThriftToParquetFileWriter {
     int i = 0;
     for (InputSplit split : splits) {
       LOG.info(split);
-      TaskAttemptContext taskAttemptContext = new TaskAttemptContext(job.getConfiguration(), new TaskAttemptID(new TaskID(jobID, true, i), 0));
+      TaskAttemptContext taskAttemptContext = new TaskAttemptContextImpl(job.getConfiguration(), new TaskAttemptID(new TaskID(jobID, true, i), 0));
       final RecordReader<Void, Group> reader = exampleInputFormat.createRecordReader(split, taskAttemptContext);
       reader.initialize(split, taskAttemptContext);
       while (reader.nextKeyValue()) {

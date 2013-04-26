@@ -15,13 +15,17 @@
   <name>Parquet Cascading</name>
   <url>https://github.com/Parquet/parquet-mr</url>
 
+  <properties>
+    <elephant-bird.version>3.0.8</elephant-bird.version>
+  </properties>
+
   <repositories>
     <repository>
      <id>conjars.org</id>
       <url>http://conjars.org/repo</url>
     </repository>
   </repositories>
-  
+
   <dependencies>
     <dependency>
       <groupId>com.twitter</groupId>
@@ -34,9 +38,9 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
-        <groupId>com.twitter</groupId>
-        <artifactId>parquet-thrift</artifactId>
-        <version>${project.version}</version>
+      <groupId>com.twitter.elephantbird</groupId>
+      <artifactId>elephant-bird-core</artifactId>
+      <version>${elephant-bird.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>

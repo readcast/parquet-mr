@@ -8,8 +8,8 @@
 
  import parquet.example.data.simple.SimpleGroup;
  import parquet.hadoop.example.ExampleInputFormat;
- import parquet.hadoop.thrift.DeprecatedContainerInputFormat;
- import parquet.hadoop.thrift.Container;
+ import parquet.hadoop.cascading.DeprecatedContainerInputFormat;
+ import parquet.hadoop.cascading.Container;
 
  import cascading.flow.FlowProcess;
  import cascading.scheme.SinkCall;
